@@ -4,6 +4,8 @@ Using OpenCV and Intel's OpenVino Toolkit, this project is able to count people 
 camera through a lightweight YOLOv3-tiny model at the edge. In this write-up, we discuss on the model's performance and 
 its suitability in running on low resource devices.
 
+Find a playable video of the application in action [here](https://drive.google.com/open?id=1bBB4Y1va9yOZhuNvhTV_-XJPVPPohK8X)
+
 ## Explaining Custom Layers
 
 Converting models through the OpenVino toolkit to their Intermediate Representation (IR) requires that all neural 
