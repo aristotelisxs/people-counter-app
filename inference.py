@@ -69,8 +69,6 @@ class Network:
         # Get the input layer
         self.input_blob = next(iter(self.network.inputs))
         self.output_blob = next(iter(self.network.outputs))
-        
-        print("IR successfully loaded into Inference Engine.")
 
         return
 
