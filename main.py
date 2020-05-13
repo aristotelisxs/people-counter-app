@@ -119,6 +119,19 @@ def connect_mqtt():
     return client
 
 
+def resize_frame(frame, new_w, new_h, net_w, net_h):
+    p_frame = cv2.resize(frame, (new_w, new_h))
+    canvas = np.full((net_h, net_w, 3), 128)
+    canvas[(net_h - new_h) // 2:
+           (net_h - new_h) // 2 + new_h, (net_w - new_w) // 2:
+                                         (net_w - new_w) // 2 + new_w, :] = p_frame
+    pp_img = canvas
+    pp_img = pp_img.transpose((2, 0, 1))
+    pp_img = pp_img.reshape(1, *pp_img.shape)  # Batch size axis add & NHWC to NCHW
+
+    return pp_img
+
+
 def infer_on_stream(args, client):
     """
     Initialize the inference network, stream video to network,
@@ -155,14 +168,14 @@ def infer_on_stream(args, client):
     new_h = int(height * min(net_w/width, net_h/height))
 
     # Create a video writer for the output video
-    # out = cv2.VideoWriter('out_' + str(cur_ts) +'.mp4', CODEC, 30, (width, height))
     out = cv2.VideoWriter('out.mp4', CODEC, 30, (width, height))
 
-    tolerance_start_time = time.time()
+    cur_frame_time = cap.get(cv2.CAP_PROP_POS_MSEC) / 1000
+    tolerance_start_time = cur_frame_time
     tolerance_time = args.detect_threshold
     prev_total_people = 0
-    # prev_duration = 0
-    cur_time = time.time()
+    total_people = 0
+    cur_time = cur_frame_time
 
     while cap.isOpened():
         flag, frame = cap.read()
@@ -176,14 +189,7 @@ def infer_on_stream(args, client):
         if key_pressed == 27:
             break
 
-        p_frame = cv2.resize(frame, (new_w, new_h))
-        canvas = np.full((net_h, net_w, 3), 128)
-        canvas[(net_h-new_h) // 2:
-               (net_h-new_h) // 2 + new_h, (net_w-new_w) // 2:
-                                           (net_w-new_w)//2 + new_w, :] = p_frame
-        pp_img = canvas
-        pp_img = pp_img.transpose((2, 0, 1))
-        pp_img = pp_img.reshape(1, *pp_img.shape)  # Batch size axis add & NHWC to NCHW
+        pp_img = resize_frame(frame, new_w, new_h, net_w, net_h)
 
         # A-synchronous (non-blocking) inference
         infer_network.exec_net(pp_img)
@@ -198,28 +204,26 @@ def infer_on_stream(args, client):
             frame, cur_total_people = filter_and_draw_boxes(
                 frame, objects, args.prob_threshold, args.intersection_over_union_threshold)
 
-            if cur_total_people > prev_total_people and tolerance_start_time + tolerance_time <= time.time():
+            if cur_total_people > prev_total_people and tolerance_start_time + tolerance_time <= cur_frame_time:
+                total_people += cur_total_people - prev_total_people
                 prev_total_people = cur_total_people
-                tolerance_start_time = time.time()
-                cur_time = time.time()
+                tolerance_start_time = cur_frame_time
+                cur_time = cap.get(cv2.CAP_PROP_POS_MSEC) / 1000
+
+                client.publish("person", json.dumps({"total": total_people}))
 
             if cur_total_people == prev_total_people:
                 # Update current time
-                tolerance_start_time = time.time()
+                tolerance_start_time = cur_frame_time
 
-            if cur_total_people < prev_total_people and tolerance_start_time + tolerance_time <= time.time():
-                duration = int(time.time() - cur_time) - (time.time() - tolerance_start_time)
+            if cur_total_people < prev_total_people and tolerance_start_time + tolerance_time <= cur_frame_time:
+                duration = int(cap.get(cv2.CAP_PROP_POS_MSEC) / 1000 - cur_time) + tolerance_time
 
-                diff = prev_total_people - cur_total_people
+                diff = prev_total_people - cur_total_people  # How many people left the frame?
                 cur_duration = int(duration / diff)
-                # cur_duration = int(cur_duration if prev_duration == 0 else (cur_duration + prev_duration) / 2)
 
                 client.publish("person/duration", json.dumps({"duration": cur_duration}))
-                tolerance_start_time = time.time()
                 prev_total_people = cur_total_people
-                cur_total_people = prev_total_people
-                # prev_duration = cur_duration
-                cur_time = time.time()
 
             client.publish("person", json.dumps({"count": cur_total_people}))
 
@@ -235,6 +239,8 @@ def infer_on_stream(args, client):
         else:
             sys.stdout.buffer.write(frame)
             sys.stdout.flush()
+
+        cur_frame_time = cap.get(cv2.CAP_PROP_POS_MSEC) / 1000
 
     # Release the capture and destroy any OpenCV windows
     cap.release()
